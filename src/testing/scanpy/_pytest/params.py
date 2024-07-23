@@ -23,11 +23,13 @@ if TYPE_CHECKING:
 
 def param_with(
     at: ParameterSet,
-    *,
+    *values: object,
     marks: Iterable[pytest.Mark | pytest.MarkDecorator] = (),
     id: str | None = None,
 ) -> ParameterSet:
-    return pytest.param(*at.values, marks=[*at.marks, *marks], id=id or at.id)
+    return pytest.param(
+        *(values or at.values), marks=[*at.marks, *marks], id=id or at.id
+    )
 
 
 MAP_ARRAY_TYPES: dict[

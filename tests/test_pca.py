@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import warnings
+from functools import partial
 from typing import TYPE_CHECKING
 
 import anndata as ad
 import numpy as np
 import pytest
 from anndata import AnnData
-from anndata.tests.helpers import (
-    asarray,
-    assert_equal,
-)
+from anndata.tests.helpers import assert_equal
 from packaging.version import Version
 from scipy import sparse
 from scipy.sparse import issparse
 
 import scanpy as sc
-from testing.scanpy._helpers import as_dense_dask_array, as_sparse_dask_array
 from testing.scanpy._helpers.data import pbmc3k_normalized
 from testing.scanpy._pytest.marks import needs
 from testing.scanpy._pytest.params import (
@@ -26,7 +23,12 @@ from testing.scanpy._pytest.params import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Iterable
     from typing import Literal
+
+    from _pytest.mark.structures import ParameterSet
+
+    from scanpy._compat import DaskArray
 
 A_list = np.array(
     [
@@ -62,13 +64,31 @@ A_svd = np.array(
 )
 
 
+def dask_array_dir_chunks(
+    a: object, *, conv: Callable[[object], DaskArray], dir: Literal["horiz", "vert"]
+):
+    arr = conv(a)
+    chunks = (arr.chunksize[0], -1) if dir == "horiz" else (-1, arr.chunksize[1])
+    return arr.rechunk(chunks)
+
+
+def svdify(array_types: Iterable[ParameterSet]) -> Generator[ParameterSet, None, None]:
+    """Change parameters to chunk in one direction only"""
+    for param in array_types:
+        assert param.id
+        if "dask" not in param.id:
+            yield param
+            continue
+
+        [orig] = param.values
+        for dir_ in ["horiz", "vert"]:
+            at = partial(dask_array_dir_chunks, conv=orig, dir=dir_)
+            at.__name__ = orig.__name__  # later the name is accessed
+            yield param_with(param, at, id=f"{param.id}-{dir_}", marks=[needs.dask_ml])
+
+
 # If one uses dask for PCA it will always require dask-ml
-@pytest.fixture(
-    params=[
-        param_with(at, marks=[needs.dask_ml]) if "dask" in at.id else at
-        for at in ARRAY_TYPES_SPARSE_DASK_UNSUPPORTED
-    ]
-)
+@pytest.fixture(params=list(svdify(ARRAY_TYPES_SPARSE_DASK_UNSUPPORTED)))
 def array_type(request: pytest.FixtureRequest):
     return request.param
 
@@ -93,24 +113,24 @@ def pca_params(
     svd_solver = None
     if svd_solver_type is not None:
         # TODO: are these right for sparse?
-        if array_type in {as_dense_dask_array, as_sparse_dask_array}:
+        if array_type.__name__ in {"as_dense_dask_array", "as_sparse_dask_array"}:
             svd_solver = (
                 {"auto", "full", "tsqr", "randomized"}
                 if zero_center
                 else {"tsqr", "randomized"}
             )
-        elif array_type in {sparse.csr_matrix, sparse.csc_matrix}:
+        elif array_type.__name__ in {"csr_matrix", "csc_matrix"}:
             svd_solver = (
                 {"lobpcg", "arpack"} if zero_center else {"arpack", "randomized"}
             )
-        elif array_type is asarray:
+        elif array_type.__name__ == "asarray":
             svd_solver = (
                 {"auto", "full", "arpack", "randomized"}
                 if zero_center
                 else {"arpack", "randomized"}
             )
         else:
-            assert False, f"Unknown array type {array_type}"
+            pytest.fail(f"Unknown array type {array_type}")
         if svd_solver_type == "invalid":
             svd_solver = all_svd_solvers - svd_solver
             expected_warning = "Ignoring"
@@ -351,7 +371,7 @@ def test_mask_var_argument_equivalence(float_dtype, array_type):
 
 
 def test_mask(array_type, request):
-    if array_type is as_dense_dask_array:
+    if array_type.__name__ == "as_dense_dask_array":
         pytest.xfail("TODO: Dask arrays are not supported")
     adata = sc.datasets.blobs(n_variables=10, n_centers=3, n_observations=100)
     adata.X = array_type(adata.X)
