@@ -66,13 +66,15 @@ A_svd = np.array(
 
 def dask_array_dir_chunks(
     a: object, *, conv: Callable[[object], DaskArray], dir: Literal["horiz", "vert"]
-):
+) -> DaskArray:
     arr = conv(a)
     chunks = (arr.chunksize[0], -1) if dir == "horiz" else (-1, arr.chunksize[1])
     return arr.rechunk(chunks)
 
 
-def svdify(array_types: Iterable[ParameterSet]) -> Generator[ParameterSet, None, None]:
+def prepare_for_svd(
+    array_types: Iterable[ParameterSet],
+) -> Generator[ParameterSet, None, None]:
     """Change parameters to chunk in one direction only"""
     for param in array_types:
         assert param.id
@@ -88,7 +90,7 @@ def svdify(array_types: Iterable[ParameterSet]) -> Generator[ParameterSet, None,
 
 
 # If one uses dask for PCA it will always require dask-ml
-@pytest.fixture(params=list(svdify(ARRAY_TYPES_SPARSE_DASK_UNSUPPORTED)))
+@pytest.fixture(params=list(prepare_for_svd(ARRAY_TYPES_SPARSE_DASK_UNSUPPORTED)))
 def array_type(request: pytest.FixtureRequest):
     return request.param
 
